@@ -1,0 +1,158 @@
+drop schema if exists juanruiz_vc cascade;
+
+create schema juanruiz_vc;
+
+set schema 'juanruiz_vc';
+
+create table tempinfo(
+	id_copia integer,
+	fecha_alquiler varchar(50),
+	fecha_devolucion varchar(50),
+	dni varchar(20),
+	nombre varchar (50),
+	apellido_1 varchar(50),
+	apellido_2 varchar(50),
+	email varchar(50),
+	telefono varchar(50),
+	codigo_postal varchar(10),
+	fecha_nacimiento varchar(11),
+	numero varchar(10),
+	letra varchar(5),
+	calle varchar(80),
+	extension varchar(50),
+	titulo varchar(200),
+	genero varchar(50),
+	sinopsis text,
+	director varchar(100)
+);
+
+create table socio(
+	id serial primary key,
+	dni varchar(10) not null,
+	nombre varchar(50) not null,
+	apellido_1 varchar(50) not null,
+	apellido_2 varchar(50),
+	fecha_nacimiento date not null,
+	telefono varchar(10) not null
+);
+
+create table direccion (
+	id serial primary key,
+	calle varchar(80),
+	numero varchar(10),
+	piso varchar(50),
+	codigo_postal varchar(10),
+	id_socio integer,
+	constraint socio_direccion_fk foreign key (id_socio) references socio(id)
+);
+
+
+alter table direccion add constraint unica_direccion_por_codigo_postal
+unique (calle,numero,piso,codigo_postal);
+
+create table genero(
+	id serial primary key,
+	genero varchar(30)
+);
+alter table genero alter column genero set not null;
+
+create table director(
+	id serial primary key,
+	director varchar(100)
+);
+alter table director alter column director set not null;
+
+create table pelicula (
+	id serial primary key,
+	titulo varchar(100),
+	id_genero integer,
+	id_director integer,
+	sinopsis text,
+	constraint genero_pelicula_fk foreign key(id_genero) references genero(id),
+	constraint director_pelicula_fk foreign key(id_director) references director(id)
+);
+
+alter table pelicula add constraint titulo_id_director
+unique (titulo, id_director);
+
+alter table pelicula
+alter column titulo set not null,
+alter column id_genero set not null,
+alter column id_director set not null,
+alter column sinopsis set not null;
+
+create table copias_pelicula(
+	id serial primary key,
+	id_pelicula integer not null,
+	constraint  pelicula_copias_fk foreign key (id_pelicula) references pelicula(id)
+);
+
+create table prestamos(
+	id serial primary key,
+	fecha_prestamo date not null,
+	fecha_devolucion date,
+	id_socio integer not null,
+	id_copia integer not null,
+	constraint socio_prestamos_fk foreign key (id_socio) references socio(id),
+	constraint copia_prestamos_fk foreign key (id_copia) references copias_pelicula(id)
+);
+
+create unique index prestamos_activos on prestamos (id_socio, id_copia)
+where fecha_devolucion is null;
+
+--inserción de datos
+insert into genero(genero)
+select distinct genero
+from tempinfo;
+
+
+insert into director(director)
+select distinct director
+from tempinfo;
+
+insert into socio(dni,nombre,apellido_1,apellido_2,telefono,fecha_nacimiento)
+select distinct dni,nombre,apellido_1,apellido_2,telefono,
+TO_DATE(fecha_nacimiento, 'DD/MM/YYYY')
+from tempinfo;
+
+insert into direccion (calle,numero,codigo_postal,piso,id_socio)
+select distinct tempinfo.calle, tempinfo.numero,
+	tempinfo.codigo_postal, tempinfo.piso, socio.id
+from tempinfo
+join socio on tempinfo.dni = socio.dni;
+
+insert into pelicula (titulo,sinopsis, id_genero,id_director)
+select distinct tempinfo.titulo, tempinfo.sinopsis, genero.id, director.id
+from tempinfo
+join genero on tempinfo.genero = genero.genero
+join director on tempinfo.director = director.director
+
+insert into copias_pelicula (id_pelicula)
+select pelicula.id 
+from tempinfo
+join pelicula on tempinfo.titulo  = pelicula.titulo
+join director on pelicula.id_director = director.id and tempinfo.director = director.director
+order by tempinfo.id_copia; 
+
+insert into prestamos (fecha_prestamo, fecha_devolucion, id_socio, id_copia)
+select 
+case when tempinfo.fecha_alquiler = '' then null else to_date(tempinfo.fecha_alquiler, 'DD/MM/YY') end,
+case when tempinfo.fecha_devolucion = '' then null else to_date(tempinfo.fecha_devolucion, 'DD/MM/YYYY') end,
+socio.id,
+(select id from copias_pelicula where id_pelicula = pelicula.id limit 1)
+from tempinfo 
+join socio on tempinfo.dni = socio.dni
+join pelicula on tempinfo.titulo = pelicula.titulo
+join director on tempinfo.director = director.director and pelicula.id_director = director.id;
+
+--consulta
+select 
+    pelicula.titulo, 
+    count(copias_pelicula.id) as copias_disponibles
+from copias_pelicula
+join pelicula on copias_pelicula.id_pelicula = pelicula.id
+left join prestamos on copias_pelicula.id = prestamos.id_copia 
+    and prestamos.fecha_devolucion is null
+where prestamos.id is null -- solo copias que no están en préstamo activo
+group by pelicula.titulo
+order by pelicula.titulo;
